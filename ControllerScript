@@ -1,0 +1,168 @@
+using UnityEngine;
+using UnityEngine.InputSystem;
+
+public class Controller : MonoBehaviour
+{
+    [SerializeField] private Rigidbody _rigidBody; //get reference of the rigidbody that is attached to the player
+    [SerializeField] private float walkingSpeed = 320f; //walkingSpeed variable use in calculating player velocity
+    [SerializeField] private float runningSpeed = 450f; //runningSpeed variable use in calculating player velocity
+    private float storedSpeed = 320f; //use to store what speed the player should be moving based off running or walking
+    private bool isWalking = true; //the bool to set what player speed is stored
+
+    [SerializeField] private PlayerMasterScript PlayerMasterScript; //ref to player master script. Used for animations and other data ref.
+    [SerializeField] private LayerMask groundLayerMask; //used for player slope adjustments
+    [SerializeField] private Transform raycastOriginForSlopes; //used for player slope adjustments
+    private Vector2 stickInputValue; //use to ref the current input from the player
+    private Vector2 stickInputValueStored;//use to ref the previous input from the player
+
+    public float speedRotation = 3.5f; //used to control speed of rotation
+    Quaternion desiredRotation; //use to store the desired direction of the player in quaternion format
+    Vector3 camForward; //use to store the normalized projected vector of the forward direction of the camera
+    private Vector3 velocitySmoothDampForPlayerVelocity = Vector3.zero; //starts off at zero since smoothdamp updates while function runs
+    [SerializeField] private float SmoothDampTime = 0.1f; //used for playermovement
+
+    private bool playerStart = true; //use to determine if controller rotation calculation needs to occur
+    [SerializeField] private float stickCheckAngle = 50f; //amount of angle +/- the player has to adjust character while running thru transitions before a forced controller rotation calc occurs.
+    [SerializeField] private Camera _camera; //store players camera
+
+    private void Update()
+    {
+        CheckIfPlayerIsMoving();
+
+        if (stickInputValue == Vector2.zero)
+        {
+            _rigidBody.velocity = Vector2.zero;
+        }
+    }
+
+    private void FixedUpdate()
+    {
+        //move logic kept in FixedUpdated since we are using unity's built in physics system
+        //Only run code if player is entering movement input
+        if (stickInputValue != Vector2.zero)
+        {
+            SlopeAdjustments();
+            PlayerMovementAndRotation();
+        }
+    }
+
+    private void OnMove(InputValue value)
+    {
+        stickInputValue = value.Get<Vector2>(); //store value recieved from input either keyboard or controller
+        PlayerMasterScript.isMoving = true;
+    }
+
+    private void OnMove1()
+    {
+        //when the player resets the joystick position, turn bool to true to force
+        //controller rotation calculation to run.
+        playerStart = true;
+        PlayerMasterScript.isMoving = false;
+    }
+
+    private void OnRun()
+    {
+        isWalking = !isWalking;
+        if (isWalking)
+        {
+            storedSpeed = walkingSpeed;
+            PlayerMasterScript.isRunning = false;
+        }
+        else
+        {
+            storedSpeed = runningSpeed;
+            PlayerMasterScript.isRunning = true;
+        }
+    }
+
+    private void OnAim()
+    {
+        PlayerMasterScript.isAiming = !PlayerMasterScript.isAiming;
+    }
+
+    private void OnCloseGame()
+    {
+        Application.Quit();
+    }
+
+    private void PlayerMovementAndRotation()
+    {
+        //calculate Atan2 of the players current and previously stored input direction.
+        //subtract the storedinput angle from the current input angle.
+        //This angle will determine if the controller rotation angle should be performed
+        //while the player is in motion
+        float inputAngle = (Mathf.Atan2(stickInputValue.y, stickInputValue.x) * Mathf.Rad2Deg);
+        float storedInputAngle = (Mathf.Atan2(stickInputValueStored.y, stickInputValueStored.x) * Mathf.Rad2Deg);
+        float checkAngle = inputAngle - storedInputAngle;
+
+        //This code is only to run if the players input direction changes "x" amount of degrees
+        //compared to previously stored input angle.
+        if (checkAngle > stickCheckAngle || checkAngle < -stickCheckAngle && !playerStart)
+        {
+            //project camera forward vector onto xy plane, normalize value. 
+            //This gives the direction the camera is facing without any tilt.
+            stickInputValueStored = stickInputValue;
+            Vector3 cameraDirection = Vector3.ProjectOnPlane(_camera.transform.forward, Vector3.forward);
+            camForward = cameraDirection.normalized;
+        }
+
+        //This code is similar to previous block, but is only meant to run when the game first starts up,
+        //or when a condition forces a need for controller rotation calculation based off camera direction.
+        //Example: When the player let goes of joystick, then tries to continue the same joystick direction
+        //it will force a recalc.
+        if (playerStart)
+        {
+            playerStart = false;
+            stickInputValueStored = stickInputValue;
+            Vector3 cameraDirection = Vector3.ProjectOnPlane(_camera.transform.forward, Vector3.forward);
+            camForward = cameraDirection.normalized;
+        }
+
+        //Use Atan2 to get -/+ angle of camera based from x axis.
+        //Atan2 returns radians and needs converted to degrees using Mathf.rad2deg
+        float camAngle = (Mathf.Atan2(camForward.y, camForward.x) * Mathf.Rad2Deg);
+
+        //Based off how the world is setup with the Z axis as the up and down directions of the world,
+        //we want to rotate our player around the Z axis. 
+        //Create a new vector3 X & Y as 0 and the z as our camera angle + our input angle. 
+        //We add an additional 180 degrees to make sure our player is facing the correct direction.
+        //We then convert this vector3 angle representation into a Quaternion using Quaternion.Euler
+        Vector3 storedCamAngle = new Vector3(0, 0, camAngle + inputAngle + 180);
+        desiredRotation = Quaternion.Euler(storedCamAngle);
+
+        //Rotate the player using Quaternion.Lerp to linearly rotate to the desired rotation
+        transform.rotation = Quaternion.Slerp(transform.rotation, desiredRotation, speedRotation * Time.deltaTime);
+
+        //Get movement direction by "converting" our quaternion into a vector 3
+        //Since our initial player movement forward is Vector.up (0,1,0), we need to
+        //adjust this by multiplying our desired rotation quaternion by Vector.up.
+        //This is stored in a temp vec3
+        Vector3 targetDirectionMovement = desiredRotation * Vector3.up;
+        Vector3 heading = Vector3.SmoothDamp(transform.up, targetDirectionMovement, ref velocitySmoothDampForPlayerVelocity, SmoothDampTime);
+        _rigidBody.velocity = heading * storedSpeed * Time.deltaTime;
+
+    }
+    private void SlopeAdjustments()
+    {
+        //create raycast downwards to check for ground detection
+            RaycastHit hit;
+            Physics.Raycast(raycastOriginForSlopes.position, Vector3.forward, out hit, 5f, groundLayerMask);
+            Vector3 temp = transform.position; //store players position
+            
+        //Store result of raycast distance + current z position, - the raycastorigin offset position
+            temp.z = hit.point.z; 
+            transform.position = temp; //set players new position
+    }
+
+    private void CheckIfPlayerIsMoving()
+    {
+        if (_rigidBody.velocity != Vector3.zero) //if the player is moving at all
+        {
+            PlayerMasterScript.isMoving = true; //set global bool isMoving to true
+        }
+        else //when player is not moving, set all movement bools to false.
+        {
+            PlayerMasterScript.isMoving = false;
+        }
+    }
+}
