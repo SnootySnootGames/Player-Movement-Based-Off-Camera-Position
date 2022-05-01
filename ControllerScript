@@ -139,7 +139,8 @@ public class Controller : MonoBehaviour
         //This is stored in a temp vec3
         Vector3 targetDirectionMovement = desiredRotation * Vector3.up;
         Vector3 heading = Vector3.SmoothDamp(transform.up, targetDirectionMovement, ref velocitySmoothDampForPlayerVelocity, SmoothDampTime);
-        _rigidBody.velocity = heading * storedSpeed * Time.deltaTime;
+        Vector3 desiredVelocity = heading * storedSpeed * Time.deltaTime;
+        _rigidBody.AddForce((desiredVelocity - _rigidBody.velocity), ForceMode.VelocityChange);
 
     }
     private void SlopeAdjustments()
