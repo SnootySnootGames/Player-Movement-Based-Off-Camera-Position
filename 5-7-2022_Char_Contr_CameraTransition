@@ -1,0 +1,125 @@
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+using UnityEngine.InputSystem;
+
+public class PlayerController : MonoBehaviour
+{
+    [SerializeField] private CharacterController controller;
+    
+    [SerializeField] private float walkingSpeed = 2f; //walkingSpeed variable use in calculating player velocity
+    [SerializeField] private float runningSpeed = 4f; //runningSpeed variable use in calculating player velocity
+    [SerializeField] private float gravity = -20f; //runningSpeed variable use in calculating player velocity
+    private Vector3 playerVelocity; //use in gravity method
+    private float storedSpeed = 2f; //use to store what speed the player should be moving based off running or walking
+    private bool isWalking = true; //the bool to set what player speed is stored
+
+    private Vector2 stickInputValue; //use to ref the current input from the player
+    private Vector2 stickInputValueStored;//use to ref the previous input from the player
+    private Vector3 moveDirectionForward; //store cam forward direction for control adjustment
+    private Vector3 moveDirectionSide; //store cam right direction for control adjustment
+
+    [SerializeField] private float playerFacingDirectionOffset; //use to modify player facing direction if needed
+    public float speedRotation = 3.5f; //used to control speed of rotation
+    Quaternion desiredRotation; //use to store the desired direction of the player in quaternion format
+    
+    [SerializeField] private float stickCheckAngle = 50f; //amount of angle +/- the player has to adjust character while running thru transitions before a forced controller rotation calc occurs.
+    [SerializeField] private Camera _camera; //store players camera
+    private bool playerStart = true; //use to determine if controller rotation calculation needs to occur
+
+    private void Update()
+    {
+        if (stickInputValue != Vector2.zero)
+        {
+            TestPLayerMovement();
+        }
+    }
+
+    private void OnMove(InputValue value)
+    {
+        stickInputValue = value.Get<Vector2>(); //store value recieved from input either keyboard or controller
+    }
+
+    private void OnMove1()
+    {
+        //when the player resets the joystick position, turn bool to true to force
+        //controller rotation calculation to run.
+        playerStart = true;
+    }
+
+    private void OnRun()
+    {
+        isWalking = !isWalking;
+        if (isWalking)
+        {
+            storedSpeed = walkingSpeed;
+        }
+        else
+        {
+            storedSpeed = runningSpeed;
+        }
+    }
+
+    private void OnCloseGame()
+    {
+        Application.Quit();
+    }
+
+    private void TestPLayerMovement()
+    {
+        //Run gravity code before any movement occurs
+        GravityMethod();
+
+        //check angle of stored input vs current input values to detemine if a Cam recalc needs to be forced.
+        float inputAngle = (Mathf.Atan2(stickInputValue.y, stickInputValue.x) * Mathf.Rad2Deg);
+        float storedInputAngle = (Mathf.Atan2(stickInputValueStored.y, stickInputValueStored.x) * Mathf.Rad2Deg);
+        float checkAngle = inputAngle - storedInputAngle;
+
+        //This code is only to run if the players input direction changes "x" amount of degrees
+        //compared to previously stored input angle. or if the playerStart var changes (force recalc)
+        if (checkAngle > stickCheckAngle || checkAngle < -stickCheckAngle || playerStart)
+        {
+            playerStart = false;
+            stickInputValueStored = stickInputValue;
+            moveDirectionForward = _camera.transform.forward;
+            moveDirectionForward.y = 0;
+            moveDirectionSide = _camera.transform.right;
+            moveDirectionSide.y = 0;
+        }
+        
+        //multiply camera forward and right by respective input direciton
+        Vector3 Forward = moveDirectionForward * stickInputValue.y;
+        Vector3 Side = moveDirectionSide * stickInputValue.x;
+
+        //add forward and right direction together. Normalize to prevent uneven movement speed
+        //distance = direction to move X currentSpeed X time.deltatime (make movement non frame rate dependent)
+        Vector3 directionToMove = (Forward + Side).normalized;
+        Vector3 distance = directionToMove * storedSpeed * Time.deltaTime;
+
+        float camAngle = Mathf.Atan2(directionToMove.x, directionToMove.z) * Mathf.Rad2Deg;
+        Vector3 storedCamAngle = new Vector3(0, camAngle - playerFacingDirectionOffset, 0);
+        desiredRotation = Quaternion.Euler(storedCamAngle);
+
+        //Rotate the player using Quaternion.Lerp to linearly rotate to the desired rotation
+        transform.rotation = Quaternion.Slerp(transform.rotation, desiredRotation, speedRotation * Time.deltaTime);
+
+        //move character controller distance
+        controller.Move(distance);
+    }
+
+    private void GravityMethod()
+    {
+        if (!controller.isGrounded) //if player is not grounded
+        {
+            //add gravity to player's y velocity 
+            playerVelocity.y += gravity * Time.deltaTime;
+            //move the player down to stay grounded per gravity amount
+            controller.Move(playerVelocity * Time.deltaTime);
+        }
+        else
+        {
+            //if player is grounded, set y velocity to 0
+            playerVelocity.y = 0f;
+        }
+    }
+}
